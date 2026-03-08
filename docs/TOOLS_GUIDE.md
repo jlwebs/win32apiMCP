@@ -47,7 +47,8 @@
 - **原理**: 
   - **Python 模式**: 注入通用中转 Shellcode，并建立命名管道回调 MCP 服务端运行 Python 脚本。
   - **ASM 模式**: 直接在目标地址注入您提供的十六进制机器码（Shellcode）。
-- **Demo 1: 拦截所有 `MessageBoxW` 弹窗 (Python)**:
+- **Demo 1: 监控并打印 `MessageBoxW` 参数 (Python)**:
+  此脚本会从环境变量中获取本次 API 调用的参数并打印到控制台，然后正常返回 0（放行）。
   ```json
   {
     "name": "advanced_hook",
@@ -56,7 +57,7 @@
       "target_dll": "user32.dll",
       "function_name": "MessageBoxW",
       "payload_type": "python",
-      "payload": "print(1)"
+      "payload": "import os; args = os.environ.get('MCP_ARGS'); print(f'>>> 拦截到弹窗! 内容指针: {args}'); print(0)"
     }
   }
   ```

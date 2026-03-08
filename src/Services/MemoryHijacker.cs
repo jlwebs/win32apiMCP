@@ -290,6 +290,9 @@ public class MemoryHijacker : IMemoryHijacker
                         UseShellExecute = false,
                         CreateNoWindow = true
                     };
+                    // Pass the captured function arguments from the pipe to Python
+                    startInfo.EnvironmentVariables["MCP_ARGS"] = args; 
+                    
                     using var proc = Process.Start(startInfo);
                     string output = proc?.StandardOutput.ReadToEnd() ?? "0";
                     return int.TryParse(output.Trim(), out int res) ? res : 0;
