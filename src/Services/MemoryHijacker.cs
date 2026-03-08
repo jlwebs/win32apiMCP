@@ -330,12 +330,38 @@ public class MemoryHijacker : IMemoryHijacker
 
     public async Task<bool> InjectAdvancedHookAsync(int processId, string targetDll, string functionName, string payloadType, string payload)
     {
-        // 1. Start the pipe server with the logic
+        var hProcess = GetProcessHandle(processId);
+        if (hProcess == IntPtr.Zero) return false;
+
+        // 1. Allocate memory in target process for hook logic
+        // We'll use this for both ASM and the Pipe Bridge.
+        uint allocSize = 4096; // One page is usually enough
+        IntPtr allocatedMem = Kernel32.VirtualAllocEx(hProcess, IntPtr.Zero, allocSize,
+            Kernel32.AllocationType.Commit | Kernel32.AllocationType.Reserve,
+            Kernel32.MemoryProtection.ExecuteReadWrite);
+
+        if (allocatedMem == IntPtr.Zero) return false;
+
+        if (payloadType.Equals("asm", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                byte[] assembled = AssembleCode(payload);
+                await WriteMemoryAsync(processId, allocatedMem, assembled);
+                return await InjectIatHookAsync(processId, targetDll, functionName, allocatedMem.ToInt64().ToString("X"));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to assemble ASM code: {Payload}", payload);
+                return false;
+            }
+        }
+
+        // 2. Start the pipe server with the logic
         string pipeName = _pipeService.StartServer(processId, functionName, (args) =>
         {
             if (payloadType.Equals("python", StringComparison.OrdinalIgnoreCase))
             {
-                // Simple Python execution (requires python.exe in path)
                 try
                 {
                     var startInfo = new ProcessStartInfo
@@ -346,7 +372,6 @@ public class MemoryHijacker : IMemoryHijacker
                         UseShellExecute = false,
                         CreateNoWindow = true
                     };
-                    // Pass the captured function arguments from the pipe to Python
                     startInfo.EnvironmentVariables["MCP_ARGS"] = args; 
                     
                     using var proc = Process.Start(startInfo);
@@ -355,38 +380,15 @@ public class MemoryHijacker : IMemoryHijacker
                 }
                 catch { return 0; }
             }
-            else if (payloadType.Equals("asm", StringComparison.OrdinalIgnoreCase))
-            {
-                try
-                {
-                    // This is where we handle the real ASM code string!
-                    byte[] assembled = AssembleCode(payload);
-                    return WriteMemoryAsync(processId, allocatedPayload, assembled).Result ? 1 : 0;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to assemble ASM code: {Payload}", payload);
-                    return 0;
-                }
-            }
             return 0;
         });
 
-        // 2. Prepare the Pipe Communication Shellcode
-        // This is a complex shellcode. For brevity and stability, I will use a simplified approach:
-        // We inject a "universal pipe caller" shellcode.
-        
+        // 3. Prepare and inject the Pipe Communication Shellcode
         byte[] pipePayload = CreatePipeShellcode(pipeName);
-        
-        var hProcess = GetProcessHandle(processId);
-        IntPtr allocatedPayload = Kernel32.VirtualAllocEx(hProcess, IntPtr.Zero, (uint)pipePayload.Length,
-            Kernel32.AllocationType.Commit | Kernel32.AllocationType.Reserve,
-            Kernel32.MemoryProtection.ExecuteReadWrite);
-        
-        await WriteMemoryAsync(processId, allocatedPayload, pipePayload);
+        await WriteMemoryAsync(processId, allocatedMem, pipePayload);
 
-        // 3. Perform IAT Hook pointing to this allocated payload
-        return await InjectIatHookAsync(processId, targetDll, functionName, allocatedPayload.ToInt64().ToString("X"));
+        // 4. Perform IAT Hook pointing to this allocated memory
+        return await InjectIatHookAsync(processId, targetDll, functionName, allocatedMem.ToInt64().ToString("X"));
     }
 
     private byte[] AssembleCode(string asmSource)
@@ -423,7 +425,7 @@ public class MemoryHijacker : IMemoryHijacker
         switch (mnemonic)
         {
             case "mov":
-                if (args.Length == 2) c.mov(GetReg(args[0]), GetVal(args[1]));
+                if (args.Length == 2) c.mov(GetReg(args[0]), (ulong)GetVal(args[1]));
                 break;
             case "push":
                 c.push(GetReg(args[0]));
@@ -438,19 +440,19 @@ public class MemoryHijacker : IMemoryHijacker
                 if (args.Length == 2) c.xor(GetReg(args[0]), GetReg(args[1]));
                 break;
             case "add":
-                if (args.Length == 2) c.add(GetReg(args[0]), GetVal(args[1]));
+                if (args.Length == 2) c.add(GetReg(args[0]), (int)GetVal(args[1]));
                 break;
             case "sub":
-                if (args.Length == 2) c.sub(GetReg(args[0]), GetVal(args[1]));
+                if (args.Length == 2) c.sub(GetReg(args[0]), (int)GetVal(args[1]));
                 break;
             case "nop":
                 c.nop();
                 break;
             case "call":
-                c.call(GetVal(args[0]));
+                c.call((ulong)GetVal(args[0]));
                 break;
             case "jmp":
-                c.jmp(GetVal(args[0]));
+                c.jmp((ulong)GetVal(args[0]));
                 break;
         }
     }
@@ -512,3 +514,22 @@ public class MemoryHijacker : IMemoryHijacker
         if (clean.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) clean = clean.Substring(2);
         return new IntPtr(Convert.ToInt64(clean, 16));
     }
+
+    private byte[] StringToByteArray(string hex)
+    {
+        return Enumerable.Range(0, hex.Length / 2)
+                         .Select(x => Convert.ToByte(hex.Substring(x * 2, 2), 16))
+                         .ToArray();
+    }
+
+    private byte[] PrepareJump(IntPtr target)
+    {
+        // FF 25 00 00 00 00 [8-byte address]
+        var bytes = new byte[14];
+        bytes[0] = 0xFF;
+        bytes[1] = 0x25;
+        BitConverter.GetBytes(0).CopyTo(bytes, 2);
+        BitConverter.GetBytes(target.ToInt64()).CopyTo(bytes, 6);
+        return bytes;
+    }
+}
