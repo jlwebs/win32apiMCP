@@ -26,6 +26,13 @@ public class MemoryHijacker : IMemoryHijacker
         _pipeService = pipeService;
     }
 
+    private bool IsProcess64Bit(IntPtr hProcess)
+    {
+        if (IntPtr.Size == 4) return false; // This process is 32-bit, so target might be too, but we handle x64 host
+        if (!Kernel32.IsWow64Process(hProcess, out bool isWow64)) return true;
+        return !isWow64; // If NOT Wow64 and we are on x64 OS, then it's a native 64-bit process
+    }
+
     private IntPtr GetProcessHandle(int processId)
     {
         if (_processHandles.TryGetValue(processId, out var handle)) return handle;
@@ -138,27 +145,35 @@ public class MemoryHijacker : IMemoryHijacker
             var hProcess = GetProcessHandle(processId);
             if (hProcess == IntPtr.Zero) return false;
 
+            bool is64Bit = IsProcess64Bit(hProcess);
             IntPtr hookAddr = ParseIntPtr(hookFuncAddrHex);
             
-            // 1. Find the base address of the MAIN module
             Process process = Process.GetProcessById(processId);
             IntPtr baseAddr = process.MainModule!.BaseAddress;
 
-            // 2. Parse PE header to find IAT
             byte[] dosHeader = ReadMemoryAsync(processId, baseAddr, 64).Result;
             if (dosHeader[0] != 'M' || dosHeader[1] != 'Z') return false;
 
             int e_lfanew = BitConverter.ToInt32(dosHeader, 0x3C);
             IntPtr ntHeaderAddr = baseAddr + e_lfanew;
-            byte[] ntHeader = ReadMemoryAsync(processId, ntHeaderAddr, 264).Result;
             
-            int importDirOffset = 0x90; 
-            int importTableRva = BitConverter.ToInt32(ntHeader, 24 + importDirOffset);
-            if (importTableRva == 0) return false;
+            // Read enough to cover Optional Header
+            byte[] ntHeader = ReadMemoryAsync(processId, ntHeaderAddr, 512).Result;
+            ushort magic = BitConverter.ToUInt16(ntHeader, 24); // PE32 or PE32+
 
+            int importTableRva;
+            if (magic == 0x20b) // PE32+ (x64)
+            {
+                importTableRva = BitConverter.ToInt32(ntHeader, 24 + 112); // OptionalHeader.DataDirectory[1].VirtualAddress
+            }
+            else // PE32 (x86)
+            {
+                importTableRva = BitConverter.ToInt32(ntHeader, 24 + 96);
+            }
+
+            if (importTableRva == 0) return false;
             IntPtr importDescAddr = baseAddr + importTableRva;
             
-            // 3. Find target function thunk
             IntPtr thunkAddrToHook = IntPtr.Zero;
             IntPtr originalFuncAddr = IntPtr.Zero;
 
@@ -180,15 +195,16 @@ public class MemoryHijacker : IMemoryHijacker
                     IntPtr localFunc = Kernel32.GetProcAddress(localModule, functionName);
 
                     int thunkIndex = 0;
+                    int ptrSize = is64Bit ? 8 : 4;
                     while (true)
                     {
-                        byte[] thunkVal = ReadMemoryAsync(processId, thunkAddr + (thunkIndex * 8), 8).Result;
-                        long addr = BitConverter.ToInt64(thunkVal, 0);
+                        byte[] thunkVal = ReadMemoryAsync(processId, thunkAddr + (thunkIndex * ptrSize), ptrSize).Result;
+                        long addr = (ptrSize == 8) ? BitConverter.ToInt64(thunkVal, 0) : BitConverter.ToUInt32(thunkVal, 0);
                         if (addr == 0) break;
 
                         if (addr == localFunc.ToInt64())
                         {
-                            thunkAddrToHook = thunkAddr + (thunkIndex * 8);
+                            thunkAddrToHook = thunkAddr + (thunkIndex * ptrSize);
                             originalFuncAddr = (IntPtr)addr;
                             break;
                         }
@@ -201,14 +217,7 @@ public class MemoryHijacker : IMemoryHijacker
 
             if (thunkAddrToHook == IntPtr.Zero) return false;
 
-            // 4. Create the Bridge Stub
-            // This stub will:
-            // - Save all registers (context preservation)
-            // - Call hookAddr
-            // - Check return value (RAX)
-            // - RAX == 0: Jump to originalFuncAddr
-            // - RAX == 1: Skip and return
-            byte[] bridgeCode = CreateBridgeStub(hookAddr, originalFuncAddr);
+            byte[] bridgeCode = is64Bit ? CreateBridgeStub(hookAddr, originalFuncAddr) : CreateBridgeStubX86(hookAddr, originalFuncAddr);
 
             IntPtr allocatedBridge = Kernel32.VirtualAllocEx(hProcess, IntPtr.Zero, (uint)bridgeCode.Length,
                 Kernel32.AllocationType.Commit | Kernel32.AllocationType.Reserve,
@@ -216,12 +225,59 @@ public class MemoryHijacker : IMemoryHijacker
 
             if (allocatedBridge == IntPtr.Zero) return false;
 
-            if (!Kernel32.WriteProcessMemory(hProcess, allocatedBridge, bridgeCode, bridgeCode.Length, out _))
-                return false;
+            Kernel32.WriteProcessMemory(hProcess, allocatedBridge, bridgeCode, bridgeCode.Length, out _);
 
-            // 5. Update IAT to point to bridge
-            return WriteMemoryAsync(processId, thunkAddrToHook, BitConverter.GetBytes(allocatedBridge.ToInt64())).Result;
+            byte[] hookPtrBytes = is64Bit ? BitConverter.GetBytes(allocatedBridge.ToInt64()) : BitConverter.GetBytes((uint)allocatedBridge.ToInt32());
+            return WriteMemoryAsync(processId, thunkAddrToHook, hookPtrBytes).Result;
         });
+    }
+
+    private byte[] CreateBridgeStubX86(IntPtr hookAddr, IntPtr originalAddr)
+    {
+        /* x86 Bridge logic (stdcall assumed):
+           push ebp; mov ebp, esp
+           // Save args (typically passed on stack for WinAPI)
+           // We don't save EAX because it's the return value holder
+           push [ebp+0x14]; push [ebp+0x10]; push [ebp+0x0C]; push [ebp+0x08]
+           
+           mov eax, hookAddr; call eax
+           
+           add esp, 0x10 ; Cleanup call args (if hook is cdecl) or ignore if return value is what matters
+           
+           cmp eax, 0
+           jne skip_original
+           
+           pop ebp
+           mov eax, originalAddr; jmp eax
+           
+           skip_original:
+           pop ebp
+           ret 0x10 ; Return and cleanup stack (adjust based on original func args count if known)
+        */
+        var ms = new MemoryStream();
+        ms.WriteByte(0x55); // push ebp
+        ms.Write(new byte[] { 0x89, 0xE5 }); // mov ebp, esp
+        
+        // Note: Generic x86 hook doesn't know exact arg count. Defaulting to 4 args preservation.
+        ms.Write(new byte[] { 0xFF, 0x75, 0x14, 0xFF, 0x75, 0x10, 0xFF, 0x75, 0x0C, 0xFF, 0x75, 0x08 });
+        
+        ms.WriteByte(0xB8); // mov eax, hookAddr
+        ms.Write(BitConverter.GetBytes(hookAddr.ToInt32()), 0, 4);
+        ms.Write(new byte[] { 0xFF, 0xD0 }); // call eax
+        
+        ms.Write(new byte[] { 0x83, 0xF8, 0x00 }); // cmp eax, 0
+        ms.Write(new byte[] { 0x75, 0x0A }); // jne skip_original (+10)
+        
+        ms.WriteByte(0x5D); // pop ebp
+        ms.WriteByte(0xB8); // mov eax, originalAddr
+        ms.Write(BitConverter.GetBytes(originalAddr.ToInt32()), 0, 4);
+        ms.Write(new byte[] { 0xFF, 0xE0 }); // jmp eax
+        
+        // skip_original:
+        ms.WriteByte(0x5D); // pop ebp
+        ms.Write(new byte[] { 0xC2, 0x10, 0x00 }); // ret 16 (4 args)
+        
+        return ms.ToArray();
     }
 
     private byte[] CreateBridgeStub(IntPtr hookAddr, IntPtr originalAddr)
