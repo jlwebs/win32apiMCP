@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>false</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyTitle>Windows API MCP Server</AssemblyTitle>
+    <AssemblyDescription>MCP Server exposing Win32 APIs for window enumeration and control interaction</AssemblyDescription>
+    <AssemblyVersion>1.0.0</AssemblyVersion>
+    <Authors>Thomas</Authors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Core JSON and HTTP support -->
+    <PackageReference Include="Iced" Version="1.21.0" />
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    <PackageReference Include="Microsoft.AspNetCore.Http" Version="2.2.2" />
+    
+    <!-- MCP Protocol support -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
+    
+    <!-- HTTP Server support -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    
+    <!-- Win32 API support -->
+    <PackageReference Include="PInvoke.User32" Version="0.7.124" />
+    <PackageReference Include="PInvoke.Kernel32" Version="0.7.124" />
+    <PackageReference Include="System.Management" Version="8.0.0" />
+    
+    <!-- Command line parsing -->
+    <PackageReference Include="CommandLineParser" Version="2.9.1" />
+    
+    <!-- Logging -->
+    <PackageReference Include="Serilog" Version="4.0.1" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="8.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+    
+    <!-- Windows Service Support -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>
