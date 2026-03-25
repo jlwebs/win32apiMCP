@@ -49,12 +49,14 @@ public class SettingsManager
     /// <param name="settings">New settings to save</param>
     public void UpdateSettings(AppSettings settings)
     {
+        AppSettings snapshot;
         lock (_lock)
         {
             _settings = settings.Clone();
             SaveSettings();
-            SettingsChanged?.Invoke(this, _settings.Clone());
+            snapshot = _settings.Clone();
         }
+        SettingsChanged?.Invoke(this, snapshot);
     }
 
     /// <summary>
@@ -78,12 +80,14 @@ public class SettingsManager
     /// <param name="setter">Action to update the setting</param>
     public void UpdateSetting<T>(Action<AppSettings> setter)
     {
+        AppSettings snapshot;
         lock (_lock)
         {
             setter(_settings);
             SaveSettings();
-            SettingsChanged?.Invoke(this, _settings.Clone());
+            snapshot = _settings.Clone();
         }
+        SettingsChanged?.Invoke(this, snapshot);
     }
 
     private AppSettings LoadSettings()
@@ -93,7 +97,12 @@ public class SettingsManager
             if (File.Exists(_settingsFilePath))
             {
                 var json = File.ReadAllText(_settingsFilePath);
-                var settings = JsonSerializer.Deserialize<AppSettings>(json);
+                var options = new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                    PropertyNameCaseInsensitive = true
+                };
+                var settings = JsonSerializer.Deserialize<AppSettings>(json, options);
                 if (settings != null)
                 {
                     _logger.LogInformation("Settings loaded from {Path}", _settingsFilePath);

@@ -12,14 +12,14 @@ public partial class SettingsForm : Form
     private AppSettings _currentSettings;
 
     // Controls
-    private CheckBox _agenticModeCheckBox;
-    private CheckBox _showNotificationsCheckBox;
-    private CheckBox _startWithWindowsCheckBox;
-    private CheckBox _minimizeToTrayCheckBox;
-    private NumericUpDown _portNumericUpDown;
-    private NumericUpDown _maxActivitiesNumericUpDown;
-    private ComboBox _logLevelComboBox;
-    private CheckBox _allowElevatedCheckBox;
+    private CheckBox _agenticModeCheckBox = null!;
+    private CheckBox _showNotificationsCheckBox = null!;
+    private CheckBox _startWithWindowsCheckBox = null!;
+    private CheckBox _minimizeToTrayCheckBox = null!;
+    private NumericUpDown _portNumericUpDown = null!;
+    private NumericUpDown _maxActivitiesNumericUpDown = null!;
+    private ComboBox _logLevelComboBox = null!;
+    private CheckBox _allowElevatedCheckBox = null!;
 
     public SettingsForm(SettingsManager settingsManager)
     {

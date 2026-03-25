@@ -9,8 +9,9 @@ public interface ISecurityManager
     /// Validates that the current process has permission to access the specified window
     /// </summary>
     /// <param name="windowHandle">Handle of the window to validate access for</param>
+    /// <returns>A task representing the asynchronous validation operation</returns>
     /// <exception cref="UnauthorizedAccessException">Thrown if access is not allowed</exception>
-    void ValidateWindowAccess(IntPtr windowHandle);
+    Task ValidateWindowAccessAsync(IntPtr windowHandle);
 
     /// <summary>
     /// Validates that the current process has permission to access the specified process

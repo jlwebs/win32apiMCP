@@ -40,7 +40,7 @@ public class Program
     public static int Main(string[] args)
     {
         var parseResult = Parser.Default.ParseArguments<CommandLineOptions>(args);
-        var options = parseResult.MapResult(opts => opts, _ => null);
+        var options = parseResult.MapResult(opts => opts, _ => (CommandLineOptions?)null);
         if (options == null) return 1;
 
         if (!options.Stdio)
@@ -76,11 +76,7 @@ public class Program
                 services.AddSingleton<ISecurityManager, SecurityManager>();
                 services.AddSingleton<WinAPIMCP.Services.Interfaces.IMemoryHijacker, WinAPIMCP.Services.MemoryHijacker>();
                 services.AddSingleton<WinAPIMCP.Services.IHookPipeService, WinAPIMCP.Services.HookPipeService>();
-                
-                if (!options.Stdio)
-                {
-                    services.AddSingleton<TrayIconService>();
-                }
+                services.AddSingleton<TrayIconService>();
             });
 
         if (!options.Stdio)
@@ -118,6 +114,28 @@ public class Program
         
         if (options.Stdio)
         {
+            // Start TrayIconService on a separate thread for STDIO mode
+            var trayThread = new System.Threading.Thread(() =>
+            {
+                try
+                {
+                    Application.EnableVisualStyles();
+                    Application.SetCompatibleTextRenderingDefault(false);
+                    Application.SetHighDpiMode(HighDpiMode.SystemAware);
+
+                    var trayIconService = host.Services.GetRequiredService<TrayIconService>();
+                    trayIconService.Initialize(host);
+                    Application.Run();
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Error starting TrayIconService in STDIO mode");
+                }
+            });
+            trayThread.SetApartmentState(System.Threading.ApartmentState.STA);
+            trayThread.IsBackground = true;
+            trayThread.Start();
+
             var stdioHandler = new WinAPIMCP.MCP.StdioMcpServer(host.Services);
             await stdioHandler.RunAsync();
             return 0;
@@ -143,8 +161,16 @@ public class Program
         };
 
         var config = new LoggerConfiguration().MinimumLevel.Is(level);
-        if (stdioMode) config.WriteTo.Console(standardErrorFromLevel: Serilog.Events.LogEventLevel.Verbose);
-        else config.WriteTo.Console();
+        if (stdioMode) 
+        {
+            // IMPORTANT: In STDIO MCP mode, stdout is for JSON-RPC ONLY.
+            // All logs MUST go to stderr.
+            config.WriteTo.Console(standardErrorFromLevel: Serilog.Events.LogEventLevel.Verbose); 
+        }
+        else 
+        {
+            config.WriteTo.Console();
+        }
         
         config.WriteTo.File("logs/winapimcp-.log", rollingInterval: RollingInterval.Day);
         Log.Logger = config.CreateLogger();

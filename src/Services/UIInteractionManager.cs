@@ -162,6 +162,7 @@ public class UIInteractionManager : IUIInteractionManager
 
     public async Task<string> GetControlTextAsync(IntPtr windowHandle, IntPtr controlHandle)
     {
+        await Task.CompletedTask;
         try
         {
             _logger.LogDebug("Getting text from control 0x{Control:X8}", controlHandle.ToInt64());
@@ -356,6 +357,7 @@ public class UIInteractionManager : IUIInteractionManager
 
     public async Task<byte[]?> TakeScreenshotAsync(IntPtr windowHandle = default)
     {
+        await Task.CompletedTask;
         try
         {
             _logger.LogDebug("Taking screenshot of {Target}", windowHandle == IntPtr.Zero ? "full screen" : $"window 0x{windowHandle.ToInt64():X8}");
@@ -442,6 +444,7 @@ public class UIInteractionManager : IUIInteractionManager
 
     public async Task<Point> GetCursorPositionAsync()
     {
+        await Task.CompletedTask;
         try
         {
             GetCursorPos(out POINT point);
@@ -456,6 +459,7 @@ public class UIInteractionManager : IUIInteractionManager
 
     public async Task<bool> MoveCursorAsync(int x, int y)
     {
+        await Task.CompletedTask;
         try
         {
             return SetCursorPos(x, y);

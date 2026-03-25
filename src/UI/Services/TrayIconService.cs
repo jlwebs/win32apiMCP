@@ -37,12 +37,15 @@ public class TrayIconService : IDisposable
         InitializeTrayIcon();
     }
 
+    private System.Threading.SynchronizationContext? _uiContext;
+
     /// <summary>
     /// Public method to ensure tray icon is initialized and start web server after UI is ready
     /// </summary>
     public void Initialize(IHost webServerHost)
     {
         _webServerHost = webServerHost;
+        _uiContext = System.Threading.SynchronizationContext.Current;
         
         if (_trayIcon == null)
         {
@@ -299,11 +302,20 @@ public class TrayIconService : IDisposable
 
     private void OnSettingsChanged(object? sender, Configuration.AppSettings settings)
     {
+        if (_uiContext != null && _uiContext != System.Threading.SynchronizationContext.Current)
+        {
+            _uiContext.Post(_ => OnSettingsChanged(sender, settings), null);
+            return;
+        }
+
         // Update context menu to reflect settings changes
         if (_contextMenu?.Items.OfType<ToolStripMenuItem>()
                 .FirstOrDefault(item => item.Text == "Agentic Mode") is ToolStripMenuItem agenticItem)
         {
+            // Temporarily unhook event to prevent infinite loop
+            agenticItem.CheckedChanged -= OnAgenticModeToggled;
             agenticItem.Checked = settings.AgenticModeEnabled;
+            agenticItem.CheckedChanged += OnAgenticModeToggled;
         }
 
         // Update tray icon tooltip

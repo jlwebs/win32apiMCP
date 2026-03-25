@@ -80,24 +80,24 @@ public class WindowManager : IWindowManager
             throw new ArgumentException("Parent handle cannot be zero", nameof(parentHandle));
         }
 
-        _securityManager.ValidateWindowAccess(parentHandle);
+        await _securityManager.ValidateWindowAccessAsync(parentHandle);
 
         var children = new List<WindowInfo>();
 
+        // First, collect all immediate children synchronously from the Win32 callback
         User32.EnumChildWindows(parentHandle, (hwnd, lParam) =>
         {
             try
             {
-                var childInfo = CreateWindowInfo(hwnd);
-                if (childInfo != null)
+                // Only process windows that are direct children of the parentHandle if we're not doing flat recursion
+                // Wait, EnumChildWindows is already recursive. But if we want WindowInfo hierarchy, 
+                // we should only handle immediate children here.
+                if (User32.GetParent(hwnd) == parentHandle)
                 {
-                    children.Add(childInfo);
-
-                    // Recursively get descendants if requested
-                    if (includeAllDescendants)
+                    var childInfo = CreateWindowInfo(hwnd);
+                    if (childInfo != null)
                     {
-                        var descendants = EnumerateChildWindowsAsync(hwnd, true).Result;
-                        childInfo.ChildWindows = descendants.ToList();
+                        children.Add(childInfo);
                     }
                 }
             }
@@ -109,8 +109,18 @@ public class WindowManager : IWindowManager
             return true; // Continue enumeration
         }, IntPtr.Zero);
 
+        // Now, if descendants are requested, handle recursion asynchronously
+        if (includeAllDescendants)
+        {
+            foreach (var child in children)
+            {
+                var descendants = await EnumerateChildWindowsAsync(child.Handle, true);
+                child.ChildWindows = descendants.ToList();
+            }
+        }
+
         _logger.LogDebug("Found {Count} child windows", children.Count);
-        return await Task.FromResult(children);
+        return children;
     }
 
     public async Task<WindowInfo?> GetWindowInfoAsync(IntPtr handle)
@@ -118,7 +128,7 @@ public class WindowManager : IWindowManager
         if (handle == IntPtr.Zero)
             return null;
 
-        _securityManager.ValidateWindowAccess(handle);
+        await _securityManager.ValidateWindowAccessAsync(handle);
         return await Task.FromResult(CreateWindowInfo(handle));
     }
 
@@ -127,7 +137,7 @@ public class WindowManager : IWindowManager
         if (handle == IntPtr.Zero)
             return string.Empty;
 
-        _securityManager.ValidateWindowAccess(handle);
+        await _securityManager.ValidateWindowAccessAsync(handle);
         return await Task.FromResult(GetWindowText(handle));
     }
 
@@ -136,7 +146,7 @@ public class WindowManager : IWindowManager
         if (handle == IntPtr.Zero)
             return string.Empty;
 
-        _securityManager.ValidateWindowAccess(handle);
+        await _securityManager.ValidateWindowAccessAsync(handle);
         return await Task.FromResult(GetClassName(handle));
     }
 
@@ -145,7 +155,7 @@ public class WindowManager : IWindowManager
         if (handle == IntPtr.Zero)
             return false;
 
-        _securityManager.ValidateWindowAccess(handle);
+        await _securityManager.ValidateWindowAccessAsync(handle);
 
         try
         {
@@ -165,7 +175,7 @@ public class WindowManager : IWindowManager
         if (handle == IntPtr.Zero)
             return false;
 
-        _securityManager.ValidateWindowAccess(handle);
+        await _securityManager.ValidateWindowAccessAsync(handle);
 
         try
         {
@@ -333,7 +343,7 @@ public class WindowManager : IWindowManager
         if (handle == IntPtr.Zero)
             return false;
 
-        _securityManager.ValidateWindowAccess(handle);
+        await _securityManager.ValidateWindowAccessAsync(handle);
 
         try
         {

@@ -29,43 +29,70 @@ public class PermissionService : IPermissionService
 
         _logger.LogInformation("Requesting user permission for: {Operation}", operation);
 
-        return await Task.Run(() =>
+        var tcs = new TaskCompletionSource<bool>();
+        
+        var thread = new Thread(() =>
         {
             try
             {
+                _logger.LogInformation(">>> [STA Thread] Starting PermissionDialog creation...");
+                
+                // Extremely important: enable visual styles for the thread before creating WinForms controls
+                Application.EnableVisualStyles();
+                Application.SetCompatibleTextRenderingDefault(false);
+                
                 var dialog = new PermissionDialog(operation, details, activityType);
+                
+                _logger.LogInformation(">>> [STA Thread] Calling dialog.ShowDialog(). Waiting for user input...");
                 dialog.ShowDialog();
+                _logger.LogInformation(">>> [STA Thread] dialog.ShowDialog() returned.");
                 
                 var granted = dialog.PermissionGranted;
+                _logger.LogInformation($">>> [STA Thread] User choice: Granted={granted}, AlwaysAllow={dialog.AlwaysAllowSelected}");
 
                 if (dialog.AlwaysAllowSelected)
                 {
-                    _logger.LogInformation("User selected 'Always Allow', enabling Agentic Mode");
-                    _settingsManager.UpdateSetting<bool>(s => s.AgenticModeEnabled = true);
+                    _logger.LogInformation(">>> [STA Thread] User selected 'Always Allow', applying to SettingsManager...");
+                    try {
+                        _settingsManager.UpdateSetting<bool>(s => s.AgenticModeEnabled = true);
+                        _logger.LogInformation(">>> [STA Thread] UpdateSetting completed successfully.");
+                    } catch (Exception ex) {
+                        _logger.LogError(ex, ">>> [STA Thread] UpdateSetting threw an exception!");
+                    }
                     granted = true;
                 }
                 
                 _logger.LogInformation("Permission {Result} for operation: {Operation}", 
                                       granted ? "granted" : "denied", operation);
 
-                // Show notification about the result if enabled
                 if (_settingsManager.GetSetting(s => s.ShowNotifications))
                 {
+                    _logger.LogInformation(">>> [STA Thread] Showing tray notification...");
                     var notificationTitle = granted ? "Permission Granted" : "Permission Denied";
                     var notificationMessage = $"{operation}: {(granted ? "Allowed" : "Blocked")}";
                     var notificationType = granted ? NotificationType.Success : NotificationType.Warning;
                     
                     ShowNotification(notificationTitle, notificationMessage, notificationType);
+                    _logger.LogInformation(">>> [STA Thread] Tray notification shown.");
                 }
 
-                return granted;
+                _logger.LogInformation(">>> [STA Thread] Resolving TCS result...");
+                tcs.SetResult(granted);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error showing permission dialog for: {Operation}", operation);
-                return false; // Deny permission on error for security
+                _logger.LogError(ex, ">>> [STA Thread] Error showing permission dialog for: {Operation}", operation);
+                tcs.SetResult(false);
             }
         });
+        
+        thread.SetApartmentState(System.Threading.ApartmentState.STA);
+        thread.IsBackground = true;
+        _logger.LogInformation(">>> Starting STA thread to show dialog...");
+        thread.Start();
+
+        _logger.LogInformation(">>> Waiting for TCS task to complete...");
+        return await tcs.Task;
     }
 
     public void ShowNotification(string title, string message, NotificationType type = NotificationType.Info)

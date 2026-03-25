@@ -13,12 +13,12 @@ public partial class MainWindow : Form
 {
     private readonly IActivityTracker _activityTracker;
     private readonly SettingsManager _settingsManager;
-    private ListView _activityListView;
-    private StatusStrip _statusStrip;
-    private ToolStripStatusLabel _statusLabel;
-    private ToolStripStatusLabel _activityCountLabel;
-    private ToolStripStatusLabel _agenticModeLabel;
-    private System.Windows.Forms.Timer _refreshTimer;
+    private ListView _activityListView = null!;
+    private StatusStrip _statusStrip = null!;
+    private ToolStripStatusLabel _statusLabel = null!;
+    private ToolStripStatusLabel _activityCountLabel = null!;
+    private ToolStripStatusLabel _agenticModeLabel = null!;
+    private System.Windows.Forms.Timer _refreshTimer = null!;
     private bool _autoRefresh = true;
 
     public MainWindow(IActivityTracker activityTracker, SettingsManager settingsManager)
