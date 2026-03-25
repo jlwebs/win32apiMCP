@@ -11,12 +11,8 @@
 {
   "mcpServers": {
     "winapi-mcp": {
-      "command": "dotnet",
+      "command": "D:\\GitHub\\127.0.0.1-84\\WinapiMCP-main\\src\\bin\\Release\\net8.0-windows\\WinAPIMCP.exe",
       "args": [
-        "run",
-        "--project",
-        "D:\\GitHub\\127.0.0.1-84\\WinapiMCP-main\\src\\WinAPIMCP.csproj",
-        "--",
         "--stdio"
       ]
     }
